@@ -150,11 +150,9 @@ static void init_vulkan() {
     allocInfo.commandBufferCount = 1;
     vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
 
-    // --- EMBEDDED SHADER MODULE CREATION ---
     VkShaderModuleCreateInfo shaderModuleCreateInfo{};
     shaderModuleCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     shaderModuleCreateInfo.codeSize = build_compute_spv_len;
-    // SPIR-V is guaranteed to be aligned to 4 bytes, so this cast is safe and standard
     shaderModuleCreateInfo.pCode = reinterpret_cast<const uint32_t*>(build_compute_spv);
 
     VkShaderModule shaderModule;
@@ -162,9 +160,8 @@ static void init_vulkan() {
         fprintf(stderr, "Failed to create shader module from embedded data\n");
         exit(1);
     }
-    // ---------------------------------------
 
-    VkDescriptorSetLayoutBinding bindings[2];
+    VkDescriptorSetLayoutBinding bindings[2]{};
     bindings[0].binding = 0; bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; bindings[0].descriptorCount = 1; bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     bindings[1].binding = 1; bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; bindings[1].descriptorCount = 1; bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
@@ -192,10 +189,9 @@ static void init_vulkan() {
     pipelineInfo.layout = pipelineLayout;
     vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &computePipeline);
 
-    // Clean up the temporary shader module (the pipeline has already compiled it)
     vkDestroyShaderModule(device, shaderModule, nullptr);
 
-    VkDescriptorPoolSize poolSizes[1];
+    VkDescriptorPoolSize poolSizes[1]{};
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     poolSizes[0].descriptorCount = 2;
 
@@ -238,14 +234,14 @@ extern "C" compute_result compute_run(uint64_t seed, uint64_t lo, uint64_t hi) {
 
         create_buffer(32, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, paramBuffer, paramBufferMemory);
 
-        VkDeviceSize resultSize = workgroups * 128; // 128 bytes per WGResult
+        VkDeviceSize resultSize = workgroups * 128;
         create_buffer(resultSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, resultBuffer, resultBufferMemory);
 
-        VkDescriptorBufferInfo bufferInfos[2];
+        VkDescriptorBufferInfo bufferInfos[2]{};
         bufferInfos[0].buffer = paramBuffer; bufferInfos[0].offset = 0; bufferInfos[0].range = 32;
         bufferInfos[1].buffer = resultBuffer; bufferInfos[1].offset = 0; bufferInfos[1].range = resultSize;
 
-        VkWriteDescriptorSet descriptorWrites[2];
+        VkWriteDescriptorSet descriptorWrites[2]{};
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; descriptorWrites[0].dstSet = descriptorSet; descriptorWrites[0].dstBinding = 0; descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; descriptorWrites[0].descriptorCount = 1; descriptorWrites[0].pBufferInfo = &bufferInfos[0];
         descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; descriptorWrites[1].dstSet = descriptorSet; descriptorWrites[1].dstBinding = 1; descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; descriptorWrites[1].descriptorCount = 1; descriptorWrites[1].pBufferInfo = &bufferInfos[1];
 

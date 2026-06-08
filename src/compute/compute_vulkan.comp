@@ -22,11 +22,8 @@ layout(set = 0, binding = 1) buffer OutputResults {
     WGResult results[];
 } output_data;
 
-// 1. The Magic Bullet: A shared memory block for the working arrays.
-// 25 elements * 256 threads = 6400 uints (25.6 KB)
 shared uint sh_working_arr[6400];
 
-// Shared variables for the workgroup reduction
 shared uint sh_max_c;
 shared uint sh_best_tid;
 
@@ -43,7 +40,7 @@ uint rotl32(uint x, int k) {
 }
 
 void main() {
-    uint tid = gl_LocalInvocationIndex; // 0 to 255
+    uint tid = gl_LocalInvocationIndex;
     uint64_t idx = params.base_index + gl_GlobalInvocationID.x;
     uint64_t stride = uint64_t(gl_WorkGroupSize.x) * uint64_t(gl_NumWorkGroups.x);
     uint64_t end = params.base_index + params.total_work;
@@ -51,7 +48,6 @@ void main() {
     uint best_c = 0;
     uint64_t best_i = idx;
 
-    // best_arr only uses constant indexing, so it safely stays in fast registers
     uint best_arr[25];
     [[unroll]]
     for (int p = 0; p < 25; p++) best_arr[p] = p + 1;
@@ -74,7 +70,6 @@ void main() {
 
         if (s0 == 0 && s1 == 0 && s2 == 0 && s3 == 0) s0 = 1;
 
-        // 2. Initialize the working array IN shared memory using interleaved stride
         [[unroll]]
         for (int p = 0; p < 25; p++) {
             sh_working_arr[p * 256 + tid] = p + 1;
@@ -96,7 +91,6 @@ void main() {
 
             uint j = x % max_val;
 
-            // 3. Perform the swap purely in shared memory. No VRAM spilling!
             uint tmp = sh_working_arr[i * 256 + tid];
             sh_working_arr[i * 256 + tid] = sh_working_arr[j * 256 + tid];
             sh_working_arr[j * 256 + tid] = tmp;
@@ -112,7 +106,6 @@ void main() {
             best_c = fp;
             best_i = idx;
 
-            // Save the best sequence locally into registers
             [[unroll]]
             for (int p = 0; p < 25; p++) {
                 best_arr[p] = sh_working_arr[p * 256 + tid];
@@ -122,10 +115,6 @@ void main() {
         }
     }
 
-    // --- Deterministic Reduction ---
-
-    // Ensure all threads are done writing to shared memory arrays
-    // before we reuse shared memory or exit the workgroup
     barrier();
 
     atomicMax(sh_max_c, best_c);
