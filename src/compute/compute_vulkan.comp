@@ -1,0 +1,149 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_control_flow_attributes : require
+
+layout(local_size_x = 256) in;
+
+layout(set = 0, binding = 0) readonly buffer InputParams {
+    uint64_t seed;
+    uint64_t base_index;
+    uint64_t total_work;
+} params;
+
+struct WGResult {
+    uint best_c;
+    uint _pad0;
+    uint64_t best_i;
+    uint best_arr[25];
+    uint _pad1[3];
+};
+
+layout(set = 0, binding = 1) buffer OutputResults {
+    WGResult results[];
+} output_data;
+
+// 1. The Magic Bullet: A shared memory block for the working arrays.
+// 25 elements * 256 threads = 6400 uints (25.6 KB)
+shared uint sh_working_arr[6400];
+
+// Shared variables for the workgroup reduction
+shared uint sh_max_c;
+shared uint sh_best_tid;
+
+uint64_t splitmix64(inout uint64_t z) {
+    z += 0x9e3779b97f4a7c15ul;
+    uint64_t v = z;
+    v = (v ^ (v >> 30)) * 0xbf58476d1ce4e5b9ul;
+    v = (v ^ (v >> 27)) * 0x94d049bb133111ebul;
+    return v ^ (v >> 31);
+}
+
+uint rotl32(uint x, int k) {
+    return (x << k) | (x >> (32 - k));
+}
+
+void main() {
+    uint tid = gl_LocalInvocationIndex; // 0 to 255
+    uint64_t idx = params.base_index + gl_GlobalInvocationID.x;
+    uint64_t stride = uint64_t(gl_WorkGroupSize.x) * uint64_t(gl_NumWorkGroups.x);
+    uint64_t end = params.base_index + params.total_work;
+
+    uint best_c = 0;
+    uint64_t best_i = idx;
+
+    // best_arr only uses constant indexing, so it safely stays in fast registers
+    uint best_arr[25];
+    [[unroll]]
+    for (int p = 0; p < 25; p++) best_arr[p] = p + 1;
+
+    if (tid == 0) {
+        sh_max_c = 0;
+        sh_best_tid = 256;
+    }
+    barrier();
+
+    for (; idx < end; idx += stride) {
+        uint64_t z = params.seed + idx * 0x9e3779b97f4a7c15ul;
+        uint64_t a = splitmix64(z);
+        uint64_t b = splitmix64(z);
+
+        uint s0 = uint(a);
+        uint s1 = uint(a >> 32);
+        uint s2 = uint(b);
+        uint s3 = uint(b >> 32);
+
+        if (s0 == 0 && s1 == 0 && s2 == 0 && s3 == 0) s0 = 1;
+
+        // 2. Initialize the working array IN shared memory using interleaved stride
+        [[unroll]]
+        for (int p = 0; p < 25; p++) {
+            sh_working_arr[p * 256 + tid] = p + 1;
+        }
+
+        [[unroll]]
+        for (int i = 24; i >= 1; i--) {
+            uint max_val = uint(i + 1);
+            uint thr = (0xFFFFFFFFu % max_val + 1) % max_val;
+
+            uint x;
+            do {
+                uint res = rotl32(s0 + s3, 7) + s0;
+                uint t = s1 << 9;
+                s2 ^= s0; s3 ^= s1; s1 ^= s2; s0 ^= s3; s2 ^= t;
+                s3 = rotl32(s3, 11);
+                x = res;
+            } while (x < thr);
+
+            uint j = x % max_val;
+
+            // 3. Perform the swap purely in shared memory. No VRAM spilling!
+            uint tmp = sh_working_arr[i * 256 + tid];
+            sh_working_arr[i * 256 + tid] = sh_working_arr[j * 256 + tid];
+            sh_working_arr[j * 256 + tid] = tmp;
+        }
+
+        uint fp = 0;
+        [[unroll]]
+        for (int p = 0; p < 25; p++) {
+            if (sh_working_arr[p * 256 + tid] == uint(p + 1)) fp++;
+        }
+
+        if (fp > best_c) {
+            best_c = fp;
+            best_i = idx;
+
+            // Save the best sequence locally into registers
+            [[unroll]]
+            for (int p = 0; p < 25; p++) {
+                best_arr[p] = sh_working_arr[p * 256 + tid];
+            }
+
+            if (fp == 25) break;
+        }
+    }
+
+    // --- Deterministic Reduction ---
+
+    // Ensure all threads are done writing to shared memory arrays
+    // before we reuse shared memory or exit the workgroup
+    barrier();
+
+    atomicMax(sh_max_c, best_c);
+    barrier();
+
+    if (best_c == sh_max_c) {
+        atomicMin(sh_best_tid, tid);
+    }
+    barrier();
+
+    if (tid == sh_best_tid) {
+        uint wg_id = gl_WorkGroupID.x;
+        output_data.results[wg_id].best_c = best_c;
+        output_data.results[wg_id].best_i = best_i;
+
+        [[unroll]]
+        for (int p = 0; p < 25; p++) {
+            output_data.results[wg_id].best_arr[p] = best_arr[p];
+        }
+    }
+}
