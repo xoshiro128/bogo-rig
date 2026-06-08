@@ -3,7 +3,17 @@ extern "C" {
 }
 #include <hip/hip_runtime.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
+
+#define HIP_CHECK(call) \
+    do { \
+        hipError_t err = call; \
+        if (err != hipSuccess) { \
+            fprintf(stderr, "HIP Error: %s at %s:%d\n", hipGetErrorString(err), __FILE__, __LINE__); \
+            exit(EXIT_FAILURE); \
+        } \
+    } while (0)
 
 static thread_local unsigned long long *d_best_and_bid = nullptr;
 static thread_local uint64_t           *d_indices = nullptr;
@@ -175,23 +185,23 @@ extern "C" compute_result compute_run(uint64_t seed, uint64_t lo, uint64_t hi) {
 
     if (blocks > allocated_blocks) {
         if (d_best_and_bid) {
-            hipFree(d_best_and_bid);
-            hipFree(d_indices);
-            hipFree(d_arrays);
+            HIP_CHECK(hipFree(d_best_and_bid));
+            HIP_CHECK(hipFree(d_indices));
+            HIP_CHECK(hipFree(d_arrays));
         }
-        hipMalloc(&d_best_and_bid, sizeof(unsigned long long));
-        hipMalloc(&d_indices, blocks * sizeof(uint64_t));
-        hipMalloc(&d_arrays, blocks * 25 * sizeof(uint8_t));
+        HIP_CHECK(hipMalloc(&d_best_and_bid, sizeof(unsigned long long)));
+        HIP_CHECK(hipMalloc(&d_indices, blocks * sizeof(uint64_t)));
+        HIP_CHECK(hipMalloc(&d_arrays, blocks * 25 * sizeof(uint8_t)));
         allocated_blocks = blocks;
     }
 
-    hipMemset(d_best_and_bid, 0, sizeof(unsigned long long));
+    HIP_CHECK(hipMemset(d_best_and_bid, 0, sizeof(unsigned long long)));
 
     compute_kernel<<<blocks, threads_per_block>>>(seed, lo, total_work, d_best_and_bid, d_indices, d_arrays);
-    hipDeviceSynchronize();
+    HIP_CHECK(hipDeviceSynchronize());
 
     unsigned long long host_best_and_bid;
-    hipMemcpy(&host_best_and_bid, d_best_and_bid, sizeof(unsigned long long), hipMemcpyDeviceToHost);
+    HIP_CHECK(hipMemcpy(&host_best_and_bid, d_best_and_bid, sizeof(unsigned long long), hipMemcpyDeviceToHost));
 
     uint32_t top_score = (uint32_t)(host_best_and_bid >> 32);
     uint32_t top_block = (uint32_t)(host_best_and_bid & 0xFFFFFFFF);
@@ -199,8 +209,8 @@ extern "C" compute_result compute_run(uint64_t seed, uint64_t lo, uint64_t hi) {
     uint64_t best_idx;
     uint8_t best_raw_arr[25];
 
-    hipMemcpy(&best_idx, &d_indices[top_block], sizeof(uint64_t), hipMemcpyDeviceToHost);
-    hipMemcpy(best_raw_arr, &d_arrays[top_block * 25], 25 * sizeof(uint8_t), hipMemcpyDeviceToHost);
+    HIP_CHECK(hipMemcpy(&best_idx, &d_indices[top_block], sizeof(uint64_t), hipMemcpyDeviceToHost));
+    HIP_CHECK(hipMemcpy(best_raw_arr, &d_arrays[top_block * 25], 25 * sizeof(uint8_t), hipMemcpyDeviceToHost));
 
     best.best_correct = (int)top_score;
     best.best_index = best_idx;

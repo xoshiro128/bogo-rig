@@ -23,7 +23,7 @@ ifeq ($(BACKEND),CUDA)
     LINKER_FLAGS =
 else ifeq ($(BACKEND),HIP)
     COMPUTE_OBJ = build/compute_hip.o
-    LDLIBS     += -lhip_hcc -lstdc++
+    LDLIBS     += -lstdc++
     LINKER      = $(HIPCC)
     LINKER_FLAGS =
 else ifeq ($(BACKEND),VULKAN)
